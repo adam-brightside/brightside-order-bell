@@ -97,3 +97,9 @@ It will then pull Shopify's customer journey (the converting visit's landing pag
 - `src/slack.js` — Slack API + the bell message
 - `src/dashboard.js` — Lifetime/MTD/WTD math and the canvas/pinned-message rendering
 - `schema.sql`, `wrangler.toml`, `test/utm.test.js` (`npm test`)
+
+## Google Sheet sync
+Every real order is also appended to a Google Sheet (`Orders` tab, one row per order) with a live `Summary` tab (WTD / MTD / Lifetime, by source, by campaign & ad). An hourly job re-sends the last 35 days so any missed row fills itself in; duplicates are ignored by order ID. Setup: `google-sheet/Code.gs` + `SHEETS_WEBHOOK_URL` var + `SHEETS_SECRET` secret, then `POST /admin/sync-sheet` to backfill.
+
+## Held bell (waits for Shopify visit data)
+With Shopify credentials set, new orders are stored as pending and the bell posts once Shopify's customer journey is ready (checked every minute), or after `POST_MAX_WAIT_MINUTES` (default 10) with whatever data exists. The `posted` column is added to the database automatically.

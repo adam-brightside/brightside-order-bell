@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS orders (
   content            TEXT,
   term               TEXT,               -- ad name
   referrer           TEXT,
-  attribution_method TEXT
+  attribution_method TEXT,
+  posted             INTEGER NOT NULL DEFAULT 1, -- 0 = waiting for Shopify visit data before the bell
+  slack_ts           TEXT                        -- Slack message id, so posts can be edited
 );
 CREATE INDEX IF NOT EXISTS idx_orders_local_date ON orders(local_date);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);

@@ -25,7 +25,7 @@ test('handles Shopify relative landing_site', () => {
 
 test('no UTM → referrer or direct', () => {
   const r = resolveAttribution({ landingSite: '/', referringSite: 'https://www.google.com/', storefrontDomain: 'drinkbrightside.com' });
-  assert.deepEqual([r.source, r.medium, r.inferred], ['google.com', 'referral', true]);
+  assert.deepEqual([r.source, r.medium, r.inferred], ['google', 'organic', true]);
   const d = resolveAttribution({ landingSite: '/products/x', storefrontDomain: 'drinkbrightside.com' });
   assert.deepEqual([d.source, d.medium], ['(direct)', '(none)']);
 });
@@ -44,4 +44,19 @@ test('week/month starts (Mon start)', () => {
   const s = periodStarts(new Date('2026-09-27T20:00:00Z'), 'America/New_York', 1); // Sunday
   assert.equal(s.monthStart, '2026-09-01');
   assert.equal(s.weekStart, '2026-09-21');
+});
+
+test('srsltid → google organic-shopping', () => {
+  const a = resolveAttribution({ landingSite: 'https://drinkbrightside.com/?srsltid=AU7gw4W2gvEnfkUVtpRqZA6kQKNeQG9a', storefrontDomain: 'drinkbrightside.com' });
+  assert.deepEqual([a.source, a.medium, a.inferredFrom, a.landingPage], ['google', 'organic-shopping', 'click_id', 'https://drinkbrightside.com/']);
+});
+
+test('no visit data → unknown, not direct', () => {
+  const a = resolveAttribution({ landingSite: null, referringSite: null, storefrontDomain: 'drinkbrightside.com' });
+  assert.deepEqual([a.source, a.medium], ['(unknown)', '(no visit data)']);
+});
+
+test('google referrer with no UTM → organic', () => {
+  const a = resolveAttribution({ landingSite: '/', referringSite: 'https://www.google.com/', storefrontDomain: 'drinkbrightside.com' });
+  assert.deepEqual([a.source, a.medium], ['google', 'organic']);
 });

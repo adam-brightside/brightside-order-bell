@@ -15,10 +15,21 @@ BELL_GIF_URL        = ""                          # public .gif URL (e.g. upload
 STORE_TIMEZONE      = "America/New_York"
 WEEK_START          = "1"                         # 1 = Monday, 0 = Sunday
 ONLINE_SOURCE_NAMES = "web"                       # comma-separated Shopify source_name values to count
-ATTRIBUTION         = "last"                      # last | first (only used with SHOPIFY_ADMIN_TOKEN)
+ATTRIBUTION         = "last_non_direct"           # last_non_direct | last | first (needs SHOPIFY_ADMIN_TOKEN)
 DASHBOARD_MODE      = "canvas"                    # canvas (channel tab) | message (pinned message)
 CURRENCY            = "USD"
+POST_MAX_WAIT_MINUTES = "10"                      # max minutes to hold the bell waiting for Shopify visit data
+SHEETS_WEBHOOK_URL  = ""                          # Apps Script web app URL (ends in /exec)
 
 # Secrets (set with `npx wrangler secret put NAME`, never commit):
 #   SLACK_BOT_TOKEN, SHOPIFY_WEBHOOK_SECRET, ADMIN_KEY
-#   SHOPIFY_ADMIN_TOKEN (optional, read_orders scope)
+#   SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (optional, Dev Dashboard app with read_orders)
+
+# ---- Google Sheet sync (optional) ----
+# SHEETS_WEBHOOK_URL is the Apps Script "Web app URL" (ends in /exec). Also set:
+#   npx wrangler secret put SHEETS_SECRET
+[observability]
+enabled = true
+
+[triggers]
+crons = ["* * * * *", "0 * * * *"]   # every minute: post held orders · hourly: recheck, canvas, sheet
