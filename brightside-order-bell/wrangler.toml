@@ -1,0 +1,24 @@
+name = "brightside-order-bell"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "order-bell"
+database_id = "PASTE_ID_FROM_wrangler_d1_create"
+
+[vars]
+SHOPIFY_STORE       = "your-store.myshopify.com"  # used for admin links + optional GraphQL
+STOREFRONT_DOMAIN   = "drinkbrightside.com"       # used to build full landing URLs
+SLACK_CHANNEL_ID    = "C0XXXXXXXXX"
+BELL_GIF_URL        = ""                          # public .gif URL (e.g. uploaded to Shopify Files)
+STORE_TIMEZONE      = "America/New_York"
+WEEK_START          = "1"                         # 1 = Monday, 0 = Sunday
+ONLINE_SOURCE_NAMES = "web"                       # comma-separated Shopify source_name values to count
+ATTRIBUTION         = "last"                      # last | first (only used with SHOPIFY_ADMIN_TOKEN)
+DASHBOARD_MODE      = "canvas"                    # canvas (channel tab) | message (pinned message)
+CURRENCY            = "USD"
+
+# Secrets (set with `npx wrangler secret put NAME`, never commit):
+#   SLACK_BOT_TOKEN, SHOPIFY_WEBHOOK_SECRET, ADMIN_KEY
+#   SHOPIFY_ADMIN_TOKEN (optional, read_orders scope)
