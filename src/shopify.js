@@ -161,5 +161,5 @@ export async function fetchJourney(order, env, attempts = 5) {
 // Slack footer text for a bell posted without Shopify's journey data, saying why.
 export function fallbackMethodLabel(journey, maxWaitMinutes = 10) {
   if (journey.error) return `landing_site (Shopify lookup failed: ${snippet(journey.error.message, 300)})`;
-  return `landing_site (Shopify visit data not ready after ${maxWaitMinutes} min)`;
+  return `landing_site (Shopify visit data not ready after ${maxWaitMinutes} min; this post updates when it arrives)`;
 }

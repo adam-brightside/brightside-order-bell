@@ -106,12 +106,17 @@ export default {
   async scheduled(event, env, ctx) {
     if (event.cron !== '0 * * * *') {
       await processPending(env); // every minute: ring the bell for held orders
+      // ...then look again for orders that posted before Shopify's journey was ready (it can take an hour+).
+      if (!hasShopifyCreds(env)) return;
+      const r = await recheckOrders(env, { days: FOLLOWUP_HOURS / 24, limit: 5 });
+      if (r.changes.length) console.log('Follow-up:', r.changes.join('; '));
+      if (r.error) console.error('Follow-up: Shopify lookup failed:', r.error.message);
       return;
     }
     // Hourly: re-check the last 3 days, roll the canvas over, fill any missing sheet rows.
     await ensureSchema(env);
     const jobs = [
-      recheckOrders(env, { days: 3, limit: 20 }).then((r) => {
+      recheckOrders(env, { days: 3, limit: 10 }).then((r) => {
         if (r.changes.length) console.log('Recheck:', r.changes.join('; '));
         if (r.error) console.error('Recheck: Shopify lookup failed:', r.error.message);
       }),
@@ -212,6 +217,9 @@ async function processOrder(order, env, { isTest = false } = {}) {
   console.log(`${rec.name}: journey not ready yet — holding the bell`);
 }
 
+// How long after posting the per-minute job keeps looking for Shopify's journey (the hourly job covers 3 days).
+const FOLLOWUP_HOURS = 3;
+
 let schemaChecked = false;
 async function ensureSchema(env) {
   if (schemaChecked) return;
@@ -296,7 +304,8 @@ async function processPending(env) {
 // Re-checks stored orders against Shopify's customer journey and fixes their attribution
 // in the database, the canvas and the Google Sheet. Read-only on the Shopify side.
 // Orders already attributed from the journey are skipped unless all=true.
-async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
+// Each order can cost a Shopify lookup and a Slack edit; keep a run well under Cloudflare's per-run request limit.
+async function recheckOrders(env, { days = 60, limit = 15, all = false } = {}) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const pending = all
     ? `1 = 1`

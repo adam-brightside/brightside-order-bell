@@ -141,7 +141,7 @@ test('token is cached and reused', async () => {
 
 test('Slack footer shows the lookup error instead of "not ready"', () => {
   const err = Object.assign(new Error('Shopify API 403: <scope> missing & denied'), { transient: false });
-  assert.equal(fallbackMethodLabel({ error: null }, 10), 'landing_site (Shopify visit data not ready after 10 min)');
+  assert.equal(fallbackMethodLabel({ error: null }, 10), 'landing_site (Shopify visit data not ready after 10 min; this post updates when it arrives)');
   const method = fallbackMethodLabel({ error: err }, 10);
   assert.equal(method, 'landing_site (Shopify lookup failed: Shopify API 403: <scope> missing & denied)');
 
