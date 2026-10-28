@@ -8,10 +8,10 @@ database_name = "order-bell"
 database_id = "PASTE_ID_FROM_wrangler_d1_create"
 
 [vars]
-SHOPIFY_STORE       = "your-store.myshopify.com"  # used for admin links + optional GraphQL
+SHOPIFY_STORE       = "cantrip-brightside.myshopify.com"  # used for admin links + optional GraphQL
 STOREFRONT_DOMAIN   = "drinkbrightside.com"       # used to build full landing URLs
-SLACK_CHANNEL_ID    = "C0XXXXXXXXX"
-BELL_GIF_URL        = ""                          # public .gif URL (e.g. uploaded to Shopify Files)
+SLACK_CHANNEL_ID    = "C0C4UD0LLPL"
+BELL_GIF_URL        = "https://cdn.shopify.com/s/files/1/0816/1466/8026/files/bell.gif?v=1790554039"                          # public .gif URL (e.g. uploaded to Shopify Files)
 STORE_TIMEZONE      = "America/New_York"
 WEEK_START          = "1"                         # 1 = Monday, 0 = Sunday
 ONLINE_SOURCE_NAMES = "web"                       # comma-separated Shopify source_name values to count
@@ -19,7 +19,7 @@ ATTRIBUTION         = "last_non_direct"           # last_non_direct | last | fir
 DASHBOARD_MODE      = "canvas"                    # canvas (channel tab) | message (pinned message)
 CURRENCY            = "USD"
 POST_MAX_WAIT_MINUTES = "10"                      # max minutes to hold the bell waiting for Shopify visit data
-SHEETS_WEBHOOK_URL  = ""                          # Apps Script web app URL (ends in /exec)
+SHEETS_WEBHOOK_URL  = "https://script.google.com/macros/s/AKfycbwWRL0bSdz4rRAbiBXaDX0uQMjwMDUoI3SmR8503rmVX9Hfe3doctrBrSJOJl0F9Dib/exec"                          # Apps Script web app URL (ends in /exec)
 
 # Secrets (set with `npx wrangler secret put NAME`, never commit):
 #   SLACK_BOT_TOKEN, SHOPIFY_WEBHOOK_SECRET, ADMIN_KEY
