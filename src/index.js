@@ -6,6 +6,7 @@ import { postOrderMessage, updateOrderMessage, slackApi } from './slack.js';
 import { parseLandingUrl } from './utm.js';
 import { refreshDashboard, localYmd } from './dashboard.js';
 import { sendToSheet, syncSheet } from './sheets.js';
+import { hasShopifyCreds, getShopifyToken, fetchJourney, graphqlEndpoint, fallbackMethodLabel } from './shopify.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -31,9 +32,14 @@ export default {
         }
         if (url.pathname === '/admin/shopify-check') {
           // Read-only: gets a token and reads the shop name + latest order's journey. Changes nothing in Shopify.
-          const token = await getShopifyToken(env, true);
+          let token;
+          try {
+            token = await getShopifyToken(env, true);
+          } catch (e) {
+            return new Response(`Shopify check FAILED getting a token for ${env.SHOPIFY_STORE}: ${e.message}`);
+          }
           if (!token) return new Response('No Shopify credentials set (SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET).');
-          const r = await fetch(`https://${env.SHOPIFY_STORE}/admin/api/${env.SHOPIFY_API_VERSION || '2026-07'}/graphql.json`, {
+          const r = await fetch(graphqlEndpoint(env), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
             body: JSON.stringify({ query: `{ shop { name } orders(first: 1, reverse: true) { nodes { name customerJourneySummary { ready lastVisit { landingPage } } } } }` }),
@@ -50,8 +56,11 @@ export default {
             `Re-checked ${r.checked} orders from the last ${days} days. ${r.updated} updated from Shopify's customer journey.`,
             r.changes.length ? `Attribution changed:\n  ${r.changes.join('\n  ')}` : 'No attribution changes.',
             `Google Sheet: ${r.sheet}`,
+            r.error ? `Shopify lookup FAILED: ${r.error.message}` : '',
             r.notReady ? `${r.notReady} orders had no journey data ready yet (they'll be retried).` : '',
-            r.remaining ? `${r.remaining} orders still to check — run this command again.` : 'All done.',
+            r.error && !r.error.transient
+              ? `Stopped early. Fix the Shopify error above, then run this command again (${r.remaining} orders still to check).`
+              : r.remaining ? `${r.remaining} orders still to check — run this command again.` : 'All done.',
           ].filter(Boolean);
           return new Response(lines.join('\n'));
         }
@@ -90,7 +99,10 @@ export default {
     // Hourly: re-check the last 3 days, roll the canvas over, fill any missing sheet rows.
     await ensureSchema(env);
     const jobs = [
-      recheckOrders(env, { days: 3, limit: 20 }).then((r) => r.changes.length && console.log('Recheck:', r.changes.join('; '))),
+      recheckOrders(env, { days: 3, limit: 20 }).then((r) => {
+        if (r.changes.length) console.log('Recheck:', r.changes.join('; '));
+        if (r.error) console.error('Recheck: Shopify lookup failed:', r.error.message);
+      }),
       refreshDashboard(env),
       syncSheet(env, 35),
     ];
@@ -122,8 +134,6 @@ async function verifyShopifyHmac(rawBody, header, secret) {
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ header.charCodeAt(i);
   return diff === 0;
 }
-
-const hasShopifyCreds = (env) => !!(env.SHOPIFY_ADMIN_TOKEN || (env.SHOPIFY_CLIENT_ID && env.SHOPIFY_CLIENT_SECRET));
 
 async function processOrder(order, env, { isTest = false } = {}) {
   // Only online-store orders (skip POS, draft orders, wholesale apps, etc.)
@@ -185,6 +195,8 @@ async function processOrder(order, env, { isTest = false } = {}) {
   // Quick first look; if Shopify's journey isn't ready yet, the per-minute job keeps checking.
   const journey = await fetchJourney({ name: rec.name, admin_graphql_api_id: order.admin_graphql_api_id }, env, 1);
   if (journey.ready) return finalizeOrder(env, row, journey);
+  // A setup problem (bad credentials, missing scope) won't fix itself: post now and say why.
+  if (journey.error && !journey.error.transient) return finalizeOrder(env, row, journey);
   console.log(`${rec.name}: journey not ready yet — holding the bell`);
 }
 
@@ -222,7 +234,7 @@ async function finalizeOrder(env, row, journey, { timedOut = false } = {}) {
 
   const rec = { ...row, items: JSON.parse(row.items || '[]') };
   const display = { ...attr };
-  if (timedOut) display.method = `landing_site (Shopify visit data not ready after ${env.POST_MAX_WAIT_MINUTES || 10} min)`;
+  if (timedOut || journey.error) display.method = fallbackMethodLabel(journey, env.POST_MAX_WAIT_MINUTES || 10);
 
   const sheetRow = { ...row, landing_page: attr.landingPage, full_url: attr.fullUrl, source: attr.source, medium: attr.medium,
     campaign: attr.campaign, content: attr.content, term: attr.term, referrer: attr.referrer, attribution_method: storedMethod };
@@ -250,122 +262,23 @@ async function processPending(env) {
   await ensureSchema(env);
   const { results } = await env.DB.prepare('SELECT * FROM orders WHERE posted = 0 ORDER BY created_at ASC LIMIT 20').all();
   const maxWaitMs = (Number(env.POST_MAX_WAIT_MINUTES) || 10) * 60000;
+  let setupError = null; // once Shopify rejects our credentials/access, don't ask again for every order
   for (const row of results) {
     try {
-      const journey = hasShopifyCreds(env)
-        ? await fetchJourney({ name: row.name, admin_graphql_api_id: `gid://shopify/Order/${row.id}` }, env, 1)
-        : { ready: false, visit: null };
+      const journey = !hasShopifyCreds(env)
+        ? { ready: false, visit: null, error: null }
+        : setupError
+          ? { ready: false, visit: null, error: setupError }
+          : await fetchJourney({ name: row.name, admin_graphql_api_id: `gid://shopify/Order/${row.id}` }, env, 1);
+      if (journey.error && !journey.error.transient) setupError = journey.error;
       const timedOut = Date.now() - Date.parse(row.created_at) > maxWaitMs;
-      if (journey.ready || timedOut || !hasShopifyCreds(env)) {
+      if (journey.ready || timedOut || setupError || !hasShopifyCreds(env)) {
         await finalizeOrder(env, row, journey, { timedOut: !journey.ready && hasShopifyCreds(env) });
       }
     } catch (e) {
       console.error('pending order failed', row.name, e.stack || e);
     }
   }
-}
-
-// Optional: richer attribution from Shopify's customer journey (needs SHOPIFY_ADMIN_TOKEN with read_orders).
-// ATTRIBUTION modes:
-//   last_non_direct (default) = most recent visit that had UTMs or an ad click ID, else the last visit
-//   last  = the visit that placed the order (same as Shopify's landing_site)
-//   first = the customer's first recorded visit
-const VISIT_FIELDS = 'landingPage referrerUrl occurredAt utmParameters { source medium campaign content term }';
-const JOURNEY_QUERY_FULL = `query ($id: ID!) { order(id: $id) { customerJourneySummary {
-  ready firstVisit { ${VISIT_FIELDS} } lastVisit { ${VISIT_FIELDS} }
-  moments(first: 50) { nodes { ... on CustomerVisit { ${VISIT_FIELDS} } } }
-} } }`;
-const JOURNEY_QUERY_BASIC = `query ($id: ID!) { order(id: $id) { customerJourneySummary {
-  ready firstVisit { ${VISIT_FIELDS} } lastVisit { ${VISIT_FIELDS} }
-} } }`;
-
-const isTaggedVisit = (v) =>
-  !!(v && (v.utmParameters?.source || v.utmParameters?.campaign ||
-    /[?&](utm_source|gclid|gbraid|wbraid|srsltid|fbclid|ttclid|msclkid)=/i.test(v.landingPage || '')));
-
-function pickVisit(s, mode) {
-  if (mode === 'first') return s.firstVisit || s.lastVisit || null;
-  if (mode === 'last') return s.lastVisit || s.firstVisit || null;
-  const visits = [...(s.moments?.nodes || []), s.firstVisit, s.lastVisit].filter((v) => v && v.landingPage);
-  const tagged = visits.filter(isTaggedVisit).sort((a, b) => String(a.occurredAt).localeCompare(String(b.occurredAt)));
-  return tagged.length ? tagged[tagged.length - 1] : s.lastVisit || s.firstVisit || null;
-}
-
-// Admin API token: either a static legacy token (SHOPIFY_ADMIN_TOKEN) or, for Dev Dashboard apps,
-// exchanged from SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (client credentials grant) and cached ~until expiry.
-async function getShopifyToken(env, forceRefresh = false) {
-  if (env.SHOPIFY_ADMIN_TOKEN) return env.SHOPIFY_ADMIN_TOKEN;
-  if (!env.SHOPIFY_CLIENT_ID || !env.SHOPIFY_CLIENT_SECRET) return null;
-  if (!forceRefresh) {
-    const row = await env.DB.prepare("SELECT value FROM meta WHERE key = 'shopify_token'").first();
-    if (row) {
-      const { token, expiresAt } = JSON.parse(row.value);
-      if (Date.now() < expiresAt) return token;
-    }
-  }
-  const r = await fetch(`https://${env.SHOPIFY_STORE}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: env.SHOPIFY_CLIENT_ID,
-      client_secret: env.SHOPIFY_CLIENT_SECRET,
-    }),
-  });
-  const text = await r.text();
-  let j;
-  try { j = JSON.parse(text); } catch { throw new Error(`Shopify token request failed (${r.status}): ${text.slice(0, 200)}`); }
-  if (!j.access_token) throw new Error(`Shopify token request failed (${r.status}): ${text.slice(0, 300)}`);
-  const expiresAt = Date.now() + Math.max(60, (Number(j.expires_in) || 3600) - 300) * 1000; // refresh 5 min early
-  await env.DB.prepare("INSERT INTO meta (key, value) VALUES ('shopify_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .bind(JSON.stringify({ token: j.access_token, expiresAt })).run();
-  console.log(`Got Shopify token (scopes: ${j.scope}, expires in ${j.expires_in}s)`);
-  return j.access_token;
-}
-
-// Returns { ready, visit }. ready=false means Shopify hadn't finished building the journey yet.
-async function fetchJourney(order, env, attempts = 5) {
-  if (!order.admin_graphql_api_id) return { ready: false, visit: null };
-  let token;
-  try {
-    token = await getShopifyToken(env);
-  } catch (e) {
-    console.warn(e.message);
-    return { ready: false, visit: null };
-  }
-  if (!token) return { ready: false, visit: null };
-  const endpoint = `https://${env.SHOPIFY_STORE}/admin/api/${env.SHOPIFY_API_VERSION || '2026-07'}/graphql.json`;
-  let query = JOURNEY_QUERY_FULL;
-
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const r = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-        body: JSON.stringify({ query, variables: { id: order.admin_graphql_api_id } }),
-      });
-      if (r.status === 401 && !env.SHOPIFY_ADMIN_TOKEN) { token = await getShopifyToken(env, true); continue; }
-      const j = await r.json();
-      if (j.errors) {
-        console.warn(`Journey query errors for ${order.name}:`, JSON.stringify(j.errors).slice(0, 500));
-        if (query === JOURNEY_QUERY_FULL) { query = JOURNEY_QUERY_BASIC; attempt--; continue; } // retry with simpler query
-      }
-      const s = j?.data?.order?.customerJourneySummary;
-      if (s?.ready) {
-        const v = pickVisit(s, env.ATTRIBUTION || 'last_non_direct');
-        console.log(`Journey for ${order.name} (${env.ATTRIBUTION || 'last_non_direct'}): ${v ? v.landingPage : 'no visits recorded'}`);
-        return { ready: true, visit: v };
-      }
-    } catch (e) {
-      console.warn('journey lookup failed', e.message);
-    }
-    if (attempt < attempts - 1) await new Promise((res) => setTimeout(res, 5000)); // journey data can lag the webhook
-  }
-  return { ready: false, visit: null };
-}
-
-async function fetchJourneyVisit(order, env) {
-  return (await fetchJourney(order, env)).visit; // null → fall back to landing_site
 }
 
 // Re-checks stored orders against Shopify's customer journey and fixes their attribution
@@ -383,8 +296,18 @@ async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
   const changes = [];
   const updated = [];
   let notReady = 0;
+  let checked = 0;
+  let error = null;
   for (const o of results) {
-    const { ready, visit } = await fetchJourney({ name: o.name, admin_graphql_api_id: `gid://shopify/Order/${o.id}` }, env, 1);
+    const journey = await fetchJourney({ name: o.name, admin_graphql_api_id: `gid://shopify/Order/${o.id}` }, env, 1);
+    checked++;
+    if (journey.error) {
+      error = journey.error;
+      if (!error.transient) break; // credentials / access problem: every other order would fail the same way
+      notReady++;
+      continue;
+    }
+    const { ready, visit } = journey;
     if (!ready) { notReady++; continue; }
     if (!visit) {
       await env.DB.prepare(`UPDATE orders SET attribution_method = 'journey_no_visits' WHERE id = ?`).bind(o.id).run();
@@ -424,7 +347,7 @@ async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
   if (updated.length) await refreshDashboard(env);
 
   const left = await env.DB.prepare(`SELECT COUNT(*) AS n FROM orders WHERE posted = 1 AND created_at >= ? AND ${pending}`).bind(since).first();
-  return { checked: results.length, updated: updated.length, notReady, changes, sheet, remaining: all ? 0 : left.n };
+  return { checked, updated: updated.length, notReady, changes, sheet, error, remaining: all ? 0 : left.n };
 }
 
 function editedNote(env) {

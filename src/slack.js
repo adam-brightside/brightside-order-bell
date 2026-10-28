@@ -69,7 +69,7 @@ export function buildOrderMessage(rec, attr, env, { isTest = false, editedNote =
     ? '*Full URL (for QA)*  _rebuilt from Shopify\'s UTM data — Shopify didn\'t keep the original link_'
     : '*Full URL (for QA)*';
 
-  const context = [`Placed ${prettyDate(rec.created_at, tz)}`, `attribution: ${attr.method}`];
+  const context = [`Placed ${prettyDate(rec.created_at, tz)}`, `attribution: ${esc(attr.method)}`];
   if (attr.referrer) context.push(`referrer: ${esc(attr.referrer).slice(0, 200)}`);
   if (attr.clickIds?.length) context.push(`click IDs: ${attr.clickIds.join(', ')}`);
 
