@@ -401,14 +401,16 @@ function attrFromRow(r) {
 async function fixSlackPosts(env, { days = 60, all = false } = {}) {
   await ensureSchema(env);
   const oldest = String(Math.floor((Date.now() - days * 86400000) / 1000));
-  const found = new Map(); // order name -> ts
+  const found = new Map(); // order name -> { ts, stale }
   let cursor;
   for (let page = 0; page < 5; page++) {
     const h = await slackApi('conversations.history', { channel: env.SLACK_CHANNEL_ID, oldest, limit: 200, cursor }, env);
     for (const m of h.messages || []) {
       if (!m.bot_id) continue;
       const match = /^New online order (#\S+) —/.exec(m.text || ''); // skips [TEST] posts
-      if (match && !found.has(match[1])) found.set(match[1], m.ts);
+      // Footer still says the journey wasn't ready, though the stored row may have been corrected since.
+      const stale = JSON.stringify(m.blocks || []).includes('visit data not ready');
+      if (match && !found.has(match[1])) found.set(match[1], { ts: m.ts, stale });
     }
     cursor = h.response_metadata?.next_cursor;
     if (!cursor || !h.has_more) break;
@@ -417,10 +419,11 @@ async function fixSlackPosts(env, { days = 60, all = false } = {}) {
   const fixed = [];
   const notFound = [];
   let remaining = 0;
-  for (const [name, ts] of found) {
+  for (const [name, { ts, stale }] of found) {
     const row = await env.DB.prepare('SELECT * FROM orders WHERE name = ?').bind(name).first();
     if (!row) { notFound.push(name); continue; }
-    if (!all && row.slack_ts === ts) continue; // already linked = already accurate
+    if (!all && row.slack_ts === ts && !stale) continue; // linked and up to date
+    if (stale && !['customer_journey', 'journey_no_visits'].includes(row.attribution_method)) continue; // still waiting on Shopify
     if (fixed.length >= 30) { remaining++; continue; } // stay under Cloudflare's per-run request limit
     await updateOrderMessage(ts, { ...row, items: JSON.parse(row.items || '[]') }, attrFromRow(row), env, editedNote(env));
     await env.DB.prepare('UPDATE orders SET slack_ts = ? WHERE id = ?').bind(ts, row.id).run();
