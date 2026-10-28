@@ -5,7 +5,7 @@ compatibility_date = "2025-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "order-bell"
-database_id = "PASTE_ID_FROM_wrangler_d1_create"
+database_id = "54373e49-f5f0-44cd-9a56-d551e58cc417"
 
 [vars]
 SHOPIFY_STORE       = "cantrip-brightside.myshopify.com"  # used for admin links + optional GraphQL
