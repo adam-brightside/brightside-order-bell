@@ -321,8 +321,11 @@ async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
     }
     const { ready, visit } = journey;
     if (!ready) { notReady++; continue; }
+    // Posted before Shopify's journey was ready: its Slack footer still says so, even if the source didn't change.
+    const wasFallback = !['customer_journey', 'journey_no_visits'].includes(o.attribution_method);
     if (!visit) {
       await env.DB.prepare(`UPDATE orders SET attribution_method = 'journey_no_visits' WHERE id = ?`).bind(o.id).run();
+      if (wasFallback) await editPost(env, o.slack_ts, { ...o, attribution_method: 'journey_no_visits' });
       continue;
     }
     const a = resolveAttribution({ landingSite: o.full_url, referringSite: o.referrer, journeyVisit: visit, storefrontDomain: env.STOREFRONT_DOMAIN });
@@ -335,16 +338,9 @@ async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
     updated.push(row);
     const before = `${o.source} / ${o.medium}`;
     const after = `${a.source} / ${a.medium}`;
-    if (before !== after || (o.campaign || '') !== (a.campaign || '') || (o.term || '') !== (a.term || '')) {
-      changes.push(`${o.name}: ${before} → ${after}${a.campaign ? ` [${a.campaign}${a.term ? ' · ' + a.term : ''}]` : ''}`);
-      if (o.slack_ts) {
-        try {
-          await updateOrderMessage(o.slack_ts, { ...row, items: JSON.parse(row.items || '[]') }, a, env, editedNote(env));
-        } catch (e) {
-          console.warn(`Slack edit failed for ${o.name}: ${e.message}`);
-        }
-      }
-    }
+    const changed = before !== after || (o.campaign || '') !== (a.campaign || '') || (o.term || '') !== (a.term || '');
+    if (changed) changes.push(`${o.name}: ${before} → ${after}${a.campaign ? ` [${a.campaign}${a.term ? ' · ' + a.term : ''}]` : ''}`);
+    if (changed || wasFallback) await editPost(env, o.slack_ts, row, a);
   }
 
   let sheet = 'not configured';
@@ -360,6 +356,16 @@ async function recheckOrders(env, { days = 60, limit = 35, all = false } = {}) {
 
   const left = await env.DB.prepare(`SELECT COUNT(*) AS n FROM orders WHERE posted = 1 AND created_at >= ? AND ${pending}`).bind(since).first();
   return { checked, updated: updated.length, notReady, changes, sheet, error, remaining: all ? 0 : left.n };
+}
+
+// Edits an order's Slack post to match the stored row. Never throws: a failed edit shouldn't stop a recheck.
+async function editPost(env, ts, row, attr = attrFromRow(row)) {
+  if (!ts) return;
+  try {
+    await updateOrderMessage(ts, { ...row, items: JSON.parse(row.items || '[]') }, attr, env, editedNote(env));
+  } catch (e) {
+    console.warn(`Slack edit failed for ${row.name}: ${e.message}`);
+  }
 }
 
 function editedNote(env) {
