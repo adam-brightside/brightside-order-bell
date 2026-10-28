@@ -42,9 +42,21 @@ export default {
           const r = await fetch(graphqlEndpoint(env), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-            body: JSON.stringify({ query: `{ shop { name } orders(first: 1, reverse: true) { nodes { name customerJourneySummary { ready lastVisit { landingPage } } } } }` }),
+            body: JSON.stringify({ query: `{ shop { name } orders(first: 5, reverse: true) { nodes { id name createdAt } } }` }),
           });
-          return new Response(`Shopify check (${r.status}): ${await r.text()}`);
+          const text = await r.text();
+          const lines = [`Shopify check (${r.status}): ${text.slice(0, 500)}`, '', 'Journey lookup, same code path as a real order:'];
+          let orders = [];
+          try { orders = JSON.parse(text).data.orders.nodes; } catch { /* shown above */ }
+          for (const o of orders) {
+            const mins = Math.round((Date.now() - Date.parse(o.createdAt)) / 60000);
+            const j = await fetchJourney({ name: o.name, admin_graphql_api_id: o.id }, env, 1);
+            const result = j.error
+              ? `ERROR (${j.error.transient ? 'temporary' : 'setup'}): ${j.error.message}`
+              : j.ready ? `ready: ${j.visit ? j.visit.landingPage : 'no visits recorded'}` : 'not ready yet';
+            lines.push(`  ${o.name} (placed ${mins} min ago): ${result}`);
+          }
+          return new Response(lines.join('\n'));
         }
         if (url.pathname === '/admin/recheck') {
           // Optional query params: ?days=60 (how far back), ?all=1 (also re-check already-fixed orders)
