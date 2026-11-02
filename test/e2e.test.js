@@ -86,3 +86,14 @@ test('fix-slack ?all=1 works through more than 30 posts', { skip }, async () => 
   assert.match(second, /Edited 5[\s\S]*All done/);
   assert.equal(new Set(w.slackEdits).size, 35);
 });
+
+test('late journey with no visits → post and sheet both say journey_no_visits', { skip }, async () => {
+  const w = await createWorld();
+  await w.webhook(order(8, 11));
+  await w.tick();
+  w.journeys.set('gid://shopify/Order/8', { ready: true, lastVisit: null, firstVisit: null, moments: { nodes: [] } });
+  await w.tick();
+  assert.match(w.footer(w.slackPosts[0]), /attribution: journey_no_visits/);
+  assert.equal(w.row(8).attribution_method, 'journey_no_visits');
+  assert.equal(w.sheet.get('8').attribution, 'journey_no_visits');
+});

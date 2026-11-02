@@ -339,7 +339,9 @@ async function recheckOrders(env, { days = 60, limit = 15, all = false } = {}) {
     const wasFallback = !['customer_journey', 'journey_no_visits'].includes(o.attribution_method);
     if (!visit) {
       await env.DB.prepare(`UPDATE orders SET attribution_method = 'journey_no_visits' WHERE id = ?`).bind(o.id).run();
-      if (wasFallback) await editPost(env, o.slack_ts, { ...o, attribution_method: 'journey_no_visits' });
+      const row = { ...o, attribution_method: 'journey_no_visits' };
+      updated.push(row); // so the sheet's Attribution column matches
+      if (wasFallback) await editPost(env, o.slack_ts, row);
       continue;
     }
     const a = resolveAttribution({ landingSite: o.full_url, referringSite: o.referrer, journeyVisit: visit, storefrontDomain: env.STOREFRONT_DOMAIN });
