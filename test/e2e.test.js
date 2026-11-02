@@ -66,3 +66,11 @@ test('canvas update fails after the bell → no duplicate bell posts', { skip },
   assert.equal(w.slackPosts.length, 1);
   assert.equal(w.row(6).slack_ts, w.slackPosts[0].ts);
 });
+
+test('malformed landing page from Shopify still rings the bell', { skip }, async () => {
+  const w = await createWorld();
+  w.journeys.set('gid://shopify/Order/7', ready({ landingPage: 'https://', referrerUrl: null, utmParameters: { source: 'meta', medium: 'paid-social' } }));
+  await w.webhook(order(7));
+  assert.equal(w.slackPosts.length, 1);
+  assert.equal(w.row(7).source, 'meta');
+});

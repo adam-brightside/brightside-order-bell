@@ -84,10 +84,12 @@ export function resolveAttribution({ landingSite, referringSite, journeyVisit, s
   // aren't in the URL, rebuild a QA link from them so the full link is still visible.
   let urlRebuilt = false;
   if (jUtm && fullUrl && !Object.keys(parsed.utm).length && UTM_KEYS.some((k) => jUtm[k])) {
-    const u = new URL(fullUrl);
-    for (const k of ['source', 'medium', 'campaign', 'term', 'content']) if (jUtm[k]) u.searchParams.set(`utm_${k}`, jUtm[k]);
-    fullUrl = u.toString();
-    urlRebuilt = true;
+    try {
+      const u = new URL(fullUrl);
+      for (const k of ['source', 'medium', 'campaign', 'term', 'content']) if (jUtm[k]) u.searchParams.set(`utm_${k}`, jUtm[k]);
+      fullUrl = u.toString();
+      urlRebuilt = true;
+    } catch { /* not a valid URL: keep it as Shopify sent it */ }
   }
 
   let source = utm.source || null;

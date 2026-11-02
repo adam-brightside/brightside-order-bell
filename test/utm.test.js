@@ -60,3 +60,12 @@ test('google referrer with no UTM → organic', () => {
   const a = resolveAttribution({ landingSite: '/', referringSite: 'https://www.google.com/', storefrontDomain: 'drinkbrightside.com' });
   assert.deepEqual([a.source, a.medium], ['google', 'organic']);
 });
+
+test('malformed journey landing page with UTMs does not throw', () => {
+  const a = resolveAttribution({
+    landingSite: '/',
+    journeyVisit: { landingPage: 'https://', referrerUrl: null, utmParameters: { source: 'meta', medium: 'paid-social' } },
+    storefrontDomain: 'drinkbrightside.com',
+  });
+  assert.deepEqual([a.source, a.medium, a.urlRebuilt], ['meta', 'paid-social', false]);
+});
