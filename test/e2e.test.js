@@ -74,3 +74,15 @@ test('malformed landing page from Shopify still rings the bell', { skip }, async
   assert.equal(w.slackPosts.length, 1);
   assert.equal(w.row(7).source, 'meta');
 });
+
+test('fix-slack ?all=1 works through more than 30 posts', { skip }, async () => {
+  const w = await createWorld();
+  for (let id = 100; id < 135; id++) { w.journeys.set(`gid://shopify/Order/${id}`, ready()); await w.webhook(order(id)); }
+  const first = await w.admin('/admin/fix-slack?days=3&all=1');
+  assert.match(first, /Edited 30/);
+  const next = /offset=(\d+)/.exec(first);
+  assert.ok(next, first);
+  const second = await w.admin(`/admin/fix-slack?days=3&all=1&offset=${next[1]}`);
+  assert.match(second, /Edited 5[\s\S]*All done/);
+  assert.equal(new Set(w.slackEdits).size, 35);
+});

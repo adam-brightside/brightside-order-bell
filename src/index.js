@@ -78,13 +78,18 @@ export default {
         }
         if (url.pathname === '/admin/fix-slack') {
           // Run /admin/recheck first so the stored data is correct, then this edits the posts to match.
+          // ?all=1 re-edits every post; it pages with ?offset=N since already-edited posts look the same.
           const days = Number(url.searchParams.get('days')) || 60;
-          const r = await fixSlackPosts(env, { days, all: url.searchParams.get('all') === '1' });
+          const all = url.searchParams.get('all') === '1';
+          const offset = Number(url.searchParams.get('offset')) || 0;
+          const r = await fixSlackPosts(env, { days, all, offset });
           const lines = [
             `Found ${r.scanned} order posts in the last ${days} days. Edited ${r.fixed.length}:`,
             ...r.fixed.map((f) => '  ' + f),
             r.notFound.length ? `Not in the database (posted before tracking started): ${r.notFound.join(', ')}` : '',
-            r.remaining ? `${r.remaining} more to edit — run this command again.` : 'All done.',
+            !r.remaining ? 'All done.'
+              : all ? `${r.remaining} more to edit — run this command again with &offset=${offset + r.fixed.length}`
+                : `${r.remaining} more to edit — run this command again.`,
           ].filter(Boolean);
           return new Response(lines.join('\n'));
         }
@@ -398,7 +403,7 @@ function attrFromRow(r) {
 
 // Finds existing order posts in the channel and edits them to match the stored (corrected) data.
 // Needs the channels:history scope (groups:history for a private channel).
-async function fixSlackPosts(env, { days = 60, all = false } = {}) {
+async function fixSlackPosts(env, { days = 60, all = false, offset = 0 } = {}) {
   await ensureSchema(env);
   const oldest = String(Math.floor((Date.now() - days * 86400000) / 1000));
   const found = new Map(); // order name -> { ts, stale }
@@ -419,11 +424,13 @@ async function fixSlackPosts(env, { days = 60, all = false } = {}) {
   const fixed = [];
   const notFound = [];
   let remaining = 0;
+  let skipped = 0;
   for (const [name, { ts, stale }] of found) {
     const row = await env.DB.prepare('SELECT * FROM orders WHERE name = ?').bind(name).first();
     if (!row) { notFound.push(name); continue; }
     if (!all && row.slack_ts === ts && !stale) continue; // linked and up to date
     if (stale && !['customer_journey', 'journey_no_visits'].includes(row.attribution_method)) continue; // still waiting on Shopify
+    if (skipped < offset) { skipped++; continue; } // edited by an earlier ?all=1 run
     if (fixed.length >= 30) { remaining++; continue; } // stay under Cloudflare's per-run request limit
     await updateOrderMessage(ts, { ...row, items: JSON.parse(row.items || '[]') }, attrFromRow(row), env, editedNote(env));
     await env.DB.prepare('UPDATE orders SET slack_ts = ? WHERE id = ?').bind(ts, row.id).run();
