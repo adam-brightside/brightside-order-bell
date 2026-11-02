@@ -55,3 +55,14 @@ test('test orders are posted but never stored', { skip }, async () => {
   assert.equal(w.slackPosts.length, 2);
   assert.equal(w.db.raw.prepare('SELECT COUNT(*) AS n FROM orders').get().n, 0);
 });
+
+test('canvas update fails after the bell → no duplicate bell posts', { skip }, async () => {
+  const w = await createWorld();
+  w.db.raw.prepare("INSERT INTO meta (key, value) VALUES ('canvas_id', 'F1')").run();
+  w.slackFail['canvases.edit'] = 'ratelimited';
+  w.journeys.set('gid://shopify/Order/6', ready());
+  await w.webhook(order(6));
+  for (let i = 0; i < 3; i++) await w.tick();
+  assert.equal(w.slackPosts.length, 1);
+  assert.equal(w.row(6).slack_ts, w.slackPosts[0].ts);
+});

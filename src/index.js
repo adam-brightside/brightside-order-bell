@@ -260,11 +260,7 @@ async function finalizeOrder(env, row, journey, { timedOut = false } = {}) {
     campaign: attr.campaign, content: attr.content, term: attr.term, referrer: attr.referrer, attribution_method: storedMethod };
 
   const [slackRes, sheetRes] = await Promise.allSettled([
-    (async () => {
-      const ts = await postOrderMessage(rec, display, env);
-      if (ts) await env.DB.prepare('UPDATE orders SET slack_ts = ? WHERE id = ?').bind(ts, row.id).run();
-      await refreshDashboard(env);
-    })(),
+    postOrderMessage(rec, display, env),
     sendToSheet([sheetRow], env, { update: true }),
   ]);
   if (slackRes.status === 'rejected') {
@@ -273,8 +269,12 @@ async function finalizeOrder(env, row, journey, { timedOut = false } = {}) {
     if (Date.now() - Date.parse(row.created_at) < 60 * 60000) {
       await env.DB.prepare('UPDATE orders SET posted = 0 WHERE id = ?').bind(row.id).run();
     }
+  } else if (slackRes.value) {
+    await env.DB.prepare('UPDATE orders SET slack_ts = ? WHERE id = ?').bind(slackRes.value, row.id).run();
   }
   if (sheetRes.status === 'rejected') console.error('Sheet failed', row.name, sheetRes.reason?.message);
+  // The bell is already out: a canvas failure must not re-post it (the hourly job retries the canvas).
+  await refreshDashboard(env).catch((e) => console.error('Canvas update failed', row.name, e.message));
 }
 
 // Every minute: post held orders once Shopify's journey is ready, or after POST_MAX_WAIT_MINUTES.
